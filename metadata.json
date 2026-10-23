@@ -1,0 +1,6 @@
+{
+  "name": "StrideClub - Community Running Club",
+  "description": "Discover upcoming group runs, schedule routes, RSVP with fellow runners, and track paces in your local running community.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

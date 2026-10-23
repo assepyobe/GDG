@@ -1,0 +1,126 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidRun(data) {
+      return data.keys().hasAll(['title', 'date', 'time', 'meetLocation', 'distanceKm', 'organizerId', 'organizerName']) &&
+        data.title is string && data.title.size() >= 3 && data.title.size() <= 100 &&
+        data.date is string && data.date.size() == 10 &&
+        data.time is string && data.time.size() == 5 &&
+        data.meetLocation is string && data.meetLocation.size() >= 2 && data.meetLocation.size() <= 100 &&
+        data.distanceKm is number && data.distanceKm > 0 && data.distanceKm <= 200 &&
+        data.organizerId is string && data.organizerId.size() <= 128 &&
+        data.organizerName is string && data.organizerName.size() <= 100;
+    }
+
+    function isValidComment(data) {
+      return data.keys().hasAll(['runId', 'userId', 'userName', 'text']) &&
+        data.runId is string && data.runId.size() <= 128 &&
+        data.userId is string && data.userId.size() <= 128 &&
+        data.userName is string && data.userName.size() <= 100 &&
+        data.text is string && data.text.size() >= 1 && data.text.size() <= 500;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName']) &&
+        data.uid is string && data.uid.size() <= 128 &&
+        data.displayName is string && data.displayName.size() <= 100;
+    }
+
+    function isValidRoute(data) {
+      return data.keys().hasAll(['title', 'distanceKm', 'difficulty', 'startLocation', 'creatorId', 'creatorName']) &&
+        data.title is string && data.title.size() >= 3 && data.title.size() <= 100 &&
+        data.distanceKm is number && data.distanceKm > 0 && data.distanceKm <= 200 &&
+        data.difficulty is string && (data.difficulty == 'easy' || data.difficulty == 'moderate' || data.difficulty == 'challenging' || data.difficulty == 'elite') &&
+        data.startLocation is string && data.startLocation.size() >= 2 && data.startLocation.size() <= 100 &&
+        data.creatorId is string && data.creatorId.size() <= 128 &&
+        data.creatorName is string && data.creatorName.size() <= 100;
+    }
+
+    // Runs collection
+    match /runs/{runId} {
+      allow read: if true;
+      allow create: if isSignedIn() &&
+        isValidId(runId) &&
+        isValidRun(incoming()) &&
+        incoming().organizerId == request.auth.uid;
+      allow update: if isSignedIn() &&
+        isValidId(runId) && (
+          // Case 1: Organizer updating run details
+          (existing().organizerId == request.auth.uid &&
+           isValidRun(incoming()) &&
+           incoming().organizerId == existing().organizerId) ||
+          // Case 2: Member RSVPing or un-RSVPing
+          (incoming().diff(existing()).affectedKeys().hasOnly(['rsvpUserIds', 'rsvpCount', 'attendees']) &&
+           incoming().organizerId == existing().organizerId &&
+           incoming().rsvpCount is number &&
+           incoming().rsvpUserIds is list &&
+           incoming().rsvpUserIds.size() <= 200 &&
+           (!('attendees' in incoming()) || (incoming().attendees is list && incoming().attendees.size() <= 200)))
+        );
+      allow delete: if isSignedIn() &&
+        isValidId(runId) &&
+        existing().organizerId == request.auth.uid;
+
+      // Nested comments subcollection
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isSignedIn() &&
+          isValidId(commentId) &&
+          isValidComment(incoming()) &&
+          incoming().userId == request.auth.uid &&
+          incoming().runId == runId;
+        allow delete: if isSignedIn() &&
+          isValidId(commentId) &&
+          (existing().userId == request.auth.uid ||
+           get(/databases/$(database)/documents/runs/$(runId)).data.organizerId == request.auth.uid);
+      }
+    }
+
+    // Routes Library collection
+    match /routes/{routeId} {
+      allow read: if true;
+      allow create: if isSignedIn() &&
+        isValidId(routeId) &&
+        isValidRoute(incoming()) &&
+        incoming().creatorId == request.auth.uid;
+      allow update: if isSignedIn() &&
+        isValidId(routeId) &&
+        existing().creatorId == request.auth.uid &&
+        isValidRoute(incoming()) &&
+        incoming().creatorId == existing().creatorId;
+      allow delete: if isSignedIn() &&
+        isValidId(routeId) &&
+        existing().creatorId == request.auth.uid;
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if isSignedIn() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidUserProfile(incoming());
+    }
+  }
+}
